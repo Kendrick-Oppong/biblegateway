@@ -12,11 +12,11 @@ A **fast, async, production-ready** web scraper that downloads the entire Bible 
 | Feature | Description |
 | :--- | :--- |
 | Async / Concurrent | Scrapes all translations for a verse in parallel — 10x faster than sync. |
-| Resume | `--resume` picks up exactly where you left off (saves after every batch). |
-| HTML Cache | Avoids re-downloading pages. `--force-refresh` to bypass. |
+| Smart Resume | `--resume` picks up exactly where you left off with **accurate progress tracking** — automatically rebuilds progress from HTML cache if needed. |
+| HTML Cache | Avoids re-downloading pages. Cache is used for both scraping and resume progress calculation. `--force-refresh` to bypass. |
 | Retry Logic | Exponential backoff with `tenacity` for network flakiness. |
 | Rate Limiting | Configurable concurrency (`--max-concurrent`) to avoid being blocked. |
-| Progress Bar | Live `tqdm` with speed (verses/sec) and ETA. |
+| Accurate Progress | Live `tqdm` showing **true completion percentage** based on total verses (31,102), not just remaining work. Includes speed (verses/sec) and accurate ETA. |
 | Per-Version JSON | Exports flat JSON arrays per translation (e.g., `versions/King James Version/KJV_bible.json`). |
 | Retry Missing | `--retry-missing` finds and re-scrapes only verses that failed. |
 | Verify Completeness | `--verify` checks every book, chapter, and verse against the canonical structure. |
@@ -48,7 +48,8 @@ biblegateway/                  ← Project root (also the package)
 ├── .gitignore
 │
 ├── bible_data.json            ← Raw scraped data (created by scraper)
-├── scraper_progress.json      ← Resume checkpoint — do NOT delete!
+├── scraper_progress.json      ← Resume checkpoint — automatically saved after each batch
+├── failed_verses.json         ← Tracks verses that failed to download
 ├── bible_scraper.log          ← Scraper activity log
 │
 ├── versions/                  ← Per-translation output (created by scraper)
@@ -58,11 +59,22 @@ biblegateway/                  ← Project root (also the package)
 │   │   └── KJV_bible.json
 │   └── ...
 │
-└── html_cache/                ← Cached HTML pages (speeds up re-scraping)
+└── html_cache/                ← Cached HTML pages (auto-created, enables fast resume)
+    ├── KJV/
+    │   ├── Genesis/
+    │   │   ├── 1/
+    │   │   │   ├── 1.html
+    │   │   │   ├── 2.html
+    │   │   │   └── ...
     ├── NIV/
     ├── ESV/
     └── ...
 ```
+
+**Important Files:**
+- **`bible_data.json`** — Contains all scraped verses organized by translation → book → chapter → verse
+- **`scraper_progress.json`** — Tracks which verses are complete across all requested translations
+- **`html_cache/`** — Stores downloaded HTML to avoid re-fetching (used for both scraping and resume progress calculation)
 
 ---
 
@@ -95,6 +107,48 @@ python cli.py --scrape-all --resume
 
 This will take 1.5–3 hours depending on network speed and `--max-concurrent` setting. The scraper is intentionally rate-limited to be respectful to BibleGateway.
 
+#### Smart Resume Feature
+
+The `--resume` flag intelligently continues from where you left off, even across different scraping sessions:
+
+**Scenario 1: Resume after interruption**
+```bash
+# Start scraping
+python cli.py -v KJV NIV ESV --resume
+
+# Press Ctrl+C to interrupt after 5,000 verses
+# Later, resume from exactly verse 5,001
+python cli.py -v KJV NIV ESV --resume
+```
+
+**Scenario 2: Add more translations later**
+```bash
+# First, scrape 3 translations
+python cli.py -v KJV NIV ESV --resume
+
+# Later, add 2 more translations
+# The scraper detects you already have KJV, NIV, ESV cached
+# It only downloads NASB and NLT for all verses
+python cli.py -v KJV NIV ESV NASB NLT --resume
+```
+
+**Scenario 3: Resume from cache after data loss**
+```bash
+# You have html_cache/ but lost bible_data.json
+python cli.py -v KJV --resume
+
+# Output:
+# Rebuilding progress from HTML cache...
+# Rebuilt 31,102 verses from cache
+# Resuming: 31,102/31,102 verses already completed (100.0%)
+# No verses to scrape (all done).
+```
+
+The resume system uses three tracking mechanisms:
+1. **`scraper_progress.json`** — Tracks which verses are complete
+2. **`bible_data.json`** — Stores the actual verse text data
+3. **`html_cache/`** — Cached HTML files (used as fallback if progress files are lost)
+
 #### Accidental Overwrite Protection
 
 If you run `python cli.py` without `--resume` but have existing data or progress files, the scraper will detect it and print a warning:
@@ -104,19 +158,38 @@ If you run `python cli.py` without `--resume` but have existing data or progress
 
 #### Terminal Progress Bar
 
-The scraper displays a live-updating progress bar directly in your terminal:
+The scraper displays a live-updating progress bar directly in your terminal that shows **accurate total progress**, not just progress on remaining work:
 
 ```
-[██████████░░░░░░░░░░░░░░]  41.5% | Genesis 24:12 | 12,900/31,102 | 4.8 v/s | ETA: 01:03:15 | Translations: 38
+Resuming: 5,247/31,102 verses already completed (16.9%)
+Scraping: 16.87%|███████░░░░░░░░░░░░░░░░░░░| 5,247/31,102 [00:42<3:45:12, 1.91verse/s]
 ```
 
-It displays:
-- Percentage completed
-- Active book and verse
-- Overall verse count
-- Speed (verses/second)
-- Estimated time remaining (ETA)
-- Number of captured translations
+When you use `--resume`, the scraper:
+1. **Automatically detects** cached HTML files from previous runs
+2. **Rebuilds progress** from cache if needed (shows which verses are already downloaded)
+3. **Displays accurate percentage** from 0-100% based on total Bible verses (31,102)
+4. **Calculates correct ETA** based only on remaining work
+
+Instead of showing:
+```
+Scraping: 0.00%|          | 0/25,855 [...]  ← Wrong! Doesn't count cached verses
+```
+
+You'll see:
+```
+Rebuilding progress from HTML cache...
+Rebuilt 5,247 verses from cache
+Resuming: 5,247/31,102 verses already completed (16.9%)
+Scraping: 16.87%|███████░  | 5,247/31,102 [...]  ← Correct! Shows true progress
+```
+
+The progress bar displays:
+- **Percentage completed** (based on all 31,102 verses)
+- **Current position** in the Bible (book chapter:verse)
+- **Verse count** (completed/total)
+- **Speed** (verses/second)
+- **Accurate ETA** (estimated time for remaining work)
 
 #### Monitor Log File
 
@@ -303,12 +376,42 @@ The scraper captures 50+ translations from BibleGateway, including:
 | :--- | :--- |
 | Network timeouts | Retry 4× with exponential backoff (1s, 2s, 4s, 15s) |
 | HTTP 429 (Rate Limit) | Retry with longer delays via tenacity |
-| Missing verses | Returns None and continues (logs error) |
+| Missing verses | Returns None and continues (logs to `failed_verses.json`) |
 | Malformed HTML | Falls back to alternative CSS selectors |
 | Cache corruption | `--force-refresh` bypasses cache |
 | Keyboard Interrupt | Saves all progress immediately |
 | Empty verse text | Caches as `__EMPTY__` to avoid re-fetching |
 | Overwrite protection | Prompts user or requires `--overwrite` flag |
+| Resume with cache but no progress | Automatically rebuilds progress from cached HTML files |
+| Adding new translations to existing scrape | Detects missing translations and only scrapes those |
+
+---
+
+## Troubleshooting
+
+### "Why does --resume show 0% when I have cached data?"
+
+**Fixed in latest version!** The scraper now automatically detects cached HTML files and rebuilds the progress tracker. You'll see:
+```
+Rebuilding progress from HTML cache...
+Rebuilt 5,247 verses from cache
+```
+
+### "How do I check which verses failed?"
+
+```bash
+python cli.py --show-failed
+```
+
+To retry failed verses:
+```bash
+python cli.py -v KJV --retry-missing
+```
+
+To clear the failed verses log:
+```bash
+python cli.py --clear-failed
+```
 
 ---
 
