@@ -249,7 +249,7 @@ python cli.py -v KJV --retry-missing --force-refresh
 
 ### Step 3 — Use the Exported Files
 
-After scraping and verifying, the scraper automatically exports each translation as a flat JSON file inside a human-readable folder in `versions/`.
+After scraping and verifying, the scraper automatically exports each translation as a flat JSON file inside a human-readable folder in `versions/`
 
 File structure:
 
