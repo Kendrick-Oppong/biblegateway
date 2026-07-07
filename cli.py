@@ -277,6 +277,11 @@ Examples:
         "--export-missing",
         help="Export missing verses to a JSON file (only works with --verify)"
     )
+    parser.add_argument(
+        "--export-versions",
+        action="store_true",
+        help="Export individual translation JSON files from bible_data.json"
+    )
 
     args = parser.parse_args()
 
@@ -312,6 +317,57 @@ Examples:
             print("✅ Cleared failed_verses.json")
         else:
             print("No failed_verses.json file to clear.")
+        return
+
+    # --- EXPORT VERSIONS MODE ---
+    if args.export_versions:
+        from bible_structure import get_all_book_names
+        from translations import VERSION_NAMES, sanitize_folder_name
+        
+        # Load bible_data.json
+        try:
+            with open("bible_data.json", "r", encoding="utf-8") as f:
+                bible_data = json.load(f)
+        except FileNotFoundError:
+            logger.error("bible_data.json not found!")
+            sys.exit(1)
+        
+        logger.info("Exporting per-version JSON files...")
+        book_order = {name: idx for idx, name in enumerate(get_all_book_names())}
+        output_dir = args.output
+        os.makedirs(output_dir, exist_ok=True)
+        
+        for version_code, books in bible_data.items():
+            verses_list = []
+            for book, chapters in books.items():
+                for chapter, verses in chapters.items():
+                    for verse_num, text in verses.items():
+                        verses_list.append({
+                            "book": book,
+                            "chapter": chapter,
+                            "verse": verse_num,
+                            "text": text
+                        })
+            
+            # Sort by book order, then chapter, then verse
+            verses_list.sort(
+                key=lambda x: (book_order.get(x["book"], 999), int(x["chapter"]), int(x["verse"]))
+            )
+            
+            display_name = VERSION_NAMES.get(version_code, version_code)
+            safe_folder = sanitize_folder_name(display_name)
+            out_dir = os.path.join(output_dir, safe_folder)
+            os.makedirs(out_dir, exist_ok=True)
+            
+            out_file = os.path.join(out_dir, f"{version_code}_bible.json")
+            with open(out_file, "w", encoding="utf-8") as f:
+                json.dump(verses_list, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"  ✓ Exported {len(verses_list):,} verses to {out_file}")
+        
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Export complete! Exported {len(bible_data)} translations.")
+        logger.info(f"{'='*60}")
         return
 
     # --- VERIFICATION MODE ---
@@ -415,7 +471,6 @@ Examples:
         retry_missing=args.retry_missing,
         auto_verify=args.auto_verify,
     )
-
     try:
         asyncio.run(scraper.scrape_all())
     except KeyboardInterrupt:
