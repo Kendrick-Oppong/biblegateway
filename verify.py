@@ -29,9 +29,11 @@ def verify_translation(
         for chapter, vcount in chapters:
             total_expected += vcount
             book_data = version_data.get(book, {})
-            chapter_data = book_data.get(chapter, {})
+            # Convert chapter to string since JSON keys are strings
+            chapter_data = book_data.get(str(chapter), {})
             for verse in range(1, vcount + 1):
-                if verse not in chapter_data or not chapter_data[verse]:
+                # Convert verse to string since JSON keys are strings
+                if str(verse) not in chapter_data or not chapter_data[str(verse)]:
                     missing.append((book, chapter, verse))
                 else:
                     total_found += 1
@@ -40,18 +42,20 @@ def verify_translation(
         if book not in BIBLE_STRUCTURE:
             for chapter, verses_data in chapters_data.items():
                 for verse in verses_data:
-                    extra.append((book, chapter, verse))
+                    extra.append((book, int(chapter), int(verse)))
             continue
         for chapter, verses_data in chapters_data.items():
-            chapter_info = next((c for c in BIBLE_STRUCTURE[book] if c[0] == chapter), None)
+            chapter_int = int(chapter)
+            chapter_info = next((c for c in BIBLE_STRUCTURE[book] if c[0] == chapter_int), None)
             if not chapter_info:
                 for verse in verses_data:
-                    extra.append((book, chapter, verse))
+                    extra.append((book, chapter_int, int(verse)))
                 continue
             max_verse = chapter_info[1]
             for verse in verses_data:
-                if verse > max_verse:
-                    extra.append((book, chapter, verse))
+                verse_int = int(verse)
+                if verse_int > max_verse:
+                    extra.append((book, chapter_int, verse_int))
 
     completeness = (total_found / total_expected * 100) if total_expected > 0 else 0.0
 
