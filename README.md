@@ -260,9 +260,8 @@ python cli.py --verify --export-missing missing_verses.json
    
    These verses are typically included in footnotes as "some manuscripts include..."
 
-2. **3 John 1:15** doesn't exist in any translation (3 John only has 14 verses)
 
-3. **Textual variants** mean some translations combine verses or format them differently (e.g., CEV's genealogy in Matthew 1)
+2. **Textual variants** mean some translations combine verses or format them differently (e.g., CEV's genealogy in Matthew 1)
 
 **Expected completion rates:**
 - Most translations: 99.9%+ (missing only verses not in their textual tradition)
