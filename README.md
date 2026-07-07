@@ -18,9 +18,8 @@ A **fast, async, production-ready** web scraper that downloads the entire Bible 
 | Rate Limiting | Configurable concurrency (`--max-concurrent`) to avoid being blocked. |
 | Accurate Progress | Live `tqdm` showing **true completion percentage** based on total work (31,102 verses × number of translations), not just remaining work. Includes speed (verse-translations/sec) and accurate ETA. |
 | Per-Version JSON | Exports flat JSON arrays per translation (e.g., `versions/King James Version/KJV_bible.json`). |
-| Export Command | `--export-versions` regenerates all translation JSON files from `bible_data.json` after manual edits or merges. |
+| Export Command | `--export-versions` regenerates all translation JSON files from `bible_data.json`. |
 | Retry Missing | `--retry-missing` finds and re-scrapes only verses that failed. |
-| Manual Verse Merge | Merge manually collected verses into the dataset with `merge_manual_verses.py`. |
 | Verify Completeness | `--verify` checks every book, chapter, and verse against the canonical structure. |
 | Overwrite Protection | Prompts or `--overwrite` to force a fresh start. |
 | Scrape All | `--scrape-all` downloads all 50+ translations in one command. |
@@ -52,11 +51,7 @@ biblegateway/                  ← Project root (also the package)
 ├── bible_data.json            ← Raw scraped data (created by scraper)
 ├── scraper_progress.json      ← Resume checkpoint — automatically saved after each batch
 ├── failed_verses.json         ← Tracks verses that failed to download
-├── manually_collected_verses.json  ← Optional: manually collected verses for merging
-├── merge_manual_verses.py     ← Script to merge manual verses into bible_data.json
-├── fetch_missing_verses.py    ← Script to fetch missing verses from BibleGateway
-├── export_versions.py         ← Export individual translations (also via cli.py --export-versions)
-├── bible_scraper.log          ← Scraper activity log
+├── bible_scraper.log          ← Scraper activity log (optional)
 │
 ├── versions/                  ← Per-translation output (created by scraper)
 │   ├── Amplified Bible/
@@ -247,9 +242,6 @@ python cli.py --verify --summary-only
 
 # Export missing verses to a file for detailed analysis
 python cli.py --verify --export-missing missing_verses.json
-
-# Export updated translation files after manual verse merges
-python cli.py --export-versions
 ```
 
 #### Understanding Missing Verses
@@ -279,56 +271,6 @@ python cli.py --export-versions
 
 **This is not a scraper error** - these verses genuinely don't exist on BibleGateway for those translations.
 
-### Achieving 100% Completion
-
-To get all translations to 100% completion:
-
-**1. Initial scrape:**
-```bash
-python cli.py --scrape-all --resume --max-concurrent 50
-```
-
-**2. Verify what's missing:**
-```bash
-python cli.py --verify --export-missing missing_verses.json
-```
-
-**3. Manually collect the missing verses** from Bible study resources or physical Bibles, then create `manually_collected_verses.json`:
-
-```json
-{
-  "summary": "Manually collected verses for textual variants",
-  "scriptures": {
-    "NIV": [
-      {
-        "book": "Matthew",
-        "chapter": 17,
-        "verse": 21,
-        "status": "bracket",
-        "text": "[But this kind does not go out except by prayer and fasting.]"
-      }
-    ]
-  }
-}
-```
-
-**4. Merge manual verses:**
-```bash
-python merge_manual_verses.py
-```
-
-**5. Export updated translations:**
-```bash
-python cli.py --export-versions
-```
-
-**6. Verify final results:**
-```bash
-python cli.py --verify
-```
-
-You should now see 100% completion for all 22 translations! 🎉
-
 #### Retrying Missing Verses
 
 If you want to double-check missing verses, use `--force-refresh` to re-download them directly from BibleGateway:
@@ -343,80 +285,18 @@ python cli.py -v NIV --retry-missing --force-refresh
 
 After running with `--force-refresh`, verses that are still missing are confirmed to not exist in those translations.
 
-### Fetching Missing Verses from Alternative Sources
+### Fetching Missing Verses
 
-If you want to attempt to find the missing verses from other Bible websites (BibleHub, Bible.com), we provide scripts to do this:
+If you want to manually supplement the dataset with verses from other sources, you can:
 
-```bash
-# 1. Fetch missing verses from alternative sources
-python fetch_missing_verses.py
-
-# 2. Merge them into bible_data.json
-python merge_alternative_verses.py
-
-# 3. Verify the updated results
-python cli.py --verify --summary-only
-```
-
-This can recover ~150-180 of the missing verses from alternative sources. See [ALTERNATIVE_SOURCES.md](ALTERNATIVE_SOURCES.md) for detailed documentation.
-
-**Note**: Some verses (like 3 John 1:15) genuinely don't exist and cannot be found anywhere.
-
-### Manual Verse Collection
-
-For verses that BibleGateway couldn't provide (typically textual variants or verses legitimately absent from certain translations), you can manually collect them and merge them into your dataset:
-
-**1. Create a `manually_collected_verses.json` file** with the verses you've manually looked up:
-
-```json
-{
-  "summary": "Manually collected verses from various sources",
-  "scriptures": {
-    "NIV": [
-      { "book": "Matthew", "chapter": 17, "verse": 21, "status": "bracket", "text": "[But this kind...]" }
-    ],
-    "KJV": [
-      { "book": "3 John", "chapter": 1, "verse": 15, "status": "included in main text", "text": "Peace be to thee..." }
-    ]
-  }
-}
-```
-
-**2. Merge the manual verses into your dataset:**
-
-```bash
-python merge_manual_verses.py
-```
-
-This will:
-- Load your manually collected verses
-- Merge them into `bible_data.json`
-- Report how many verses were added, updated, or skipped
-
-**3. Export the updated translation files:**
-
-```bash
-python cli.py --export-versions
-```
-
-**4. Verify the results:**
-
-```bash
-python cli.py --verify
-```
-
-You should now see 100% completion for all translations!
+1. Use `--export-missing` to get a list of missing verses
+2. Manually look up those verses from physical Bibles or other sources
+3. Edit `bible_data.json` directly to add them
+4. Run `python cli.py --export-versions` to regenerate the per-translation JSON files
 
 ### Step 3 — Use the Exported Files
 
-After scraping and verifying, you can export each translation as a flat JSON file inside a human-readable folder in `versions/`:
-
-```bash
-# Export all translations from bible_data.json
-python cli.py --export-versions
-```
-
-The scraper also automatically exports after scraping is complete.
+After scraping and verifying, you can export each translation as a flat JSON file:
 
 File structure:
 
@@ -580,19 +460,6 @@ python cli.py --clear-failed
 
 # Enable debug logging
 python cli.py -v KJV --debug
-```
-
-### Manual Verse Management
-
-```bash
-# Merge manually collected verses
-python merge_manual_verses.py
-
-# Fetch missing verses from BibleGateway
-python fetch_missing_verses.py
-
-# Export translations after manual merge
-python cli.py --export-versions
 ```
 
 ---
