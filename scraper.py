@@ -214,19 +214,8 @@ class BibleGatewayScraper:
             self.progress = {}
         if os.path.exists(self.data_file):
             with open(self.data_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            # JSON keys are always strings; normalize chapter/verse to int
-            # so in-memory lookups with int keys work correctly.
-            self.data = {}
-            for version_code, books in raw.items():
-                self.data[version_code] = {}
-                for book, chapters in books.items():
-                    self.data[version_code][book] = {}
-                    for ch_key, verses in chapters.items():
-                        ch_int = int(ch_key)
-                        self.data[version_code][book][ch_int] = {}
-                        for v_key, text in verses.items():
-                            self.data[version_code][book][ch_int][int(v_key)] = text
+                self.data = json.load(f)
+                # JSON loads with string keys, keep them as strings for consistency
         else:
             self.data = {}
         if os.path.exists(self.failed_file):
@@ -272,12 +261,12 @@ class BibleGatewayScraper:
                     verse_texts = {}
                     
                     for version_code in self.versions:
-                        # Skip if already in data
+                        # Skip if already in data (use string keys for JSON compatibility)
                         if (version_code in self.data and 
                             book in self.data[version_code] and
-                            chapter in self.data[version_code][book] and
-                            verse in self.data[version_code][book][chapter]):
-                            verse_texts[version_code] = self.data[version_code][book][chapter][verse]
+                            str(chapter) in self.data[version_code][book] and
+                            str(verse) in self.data[version_code][book][str(chapter)]):
+                            verse_texts[version_code] = self.data[version_code][book][str(chapter)][str(verse)]
                             continue
                         
                         cache_path = self._get_cache_path(version_code, book, chapter, verse)
@@ -293,13 +282,13 @@ class BibleGatewayScraper:
                             all_cached = False
                             break
                     
-                    # If all versions have valid cache, mark as done
+                    # If all versions have valid cache, mark as done (use string keys)
                     if all_cached and len(verse_texts) == len(self.versions):
                         for version_code, text in verse_texts.items():
                             self.data.setdefault(version_code, {})
                             self.data[version_code].setdefault(book, {})
-                            self.data[version_code][book].setdefault(chapter, {})
-                            self.data[version_code][book][chapter][verse] = text
+                            self.data[version_code][book].setdefault(str(chapter), {})
+                            self.data[version_code][book][str(chapter)][str(verse)] = text
                         
                         self._mark_verse_done(book, chapter, verse)
                         rebuilt_count += 1
@@ -319,8 +308,8 @@ class BibleGatewayScraper:
         for version_code in self.versions:
             if not (version_code in self.data and
                     book in self.data[version_code] and
-                    chapter in self.data[version_code][book] and
-                    verse in self.data[version_code][book][chapter]):
+                    str(chapter) in self.data[version_code][book] and
+                    str(verse) in self.data[version_code][book][str(chapter)]):
                 return False
         return True
 
@@ -356,19 +345,22 @@ class BibleGatewayScraper:
         return results
 
     def _find_missing_verses(self) -> List[Tuple[str, int, int]]:
+        """Find verses that are missing from at least one of the requested translations."""
         missing = []
         for book, chapters in BIBLE_STRUCTURE.items():
             for chapter, vcount in chapters:
                 for verse in range(1, vcount + 1):
-                    found = False
+                    # Check if ANY of the requested versions is missing this verse
+                    is_missing_from_any = False
                     for version_code in self.versions:
-                        if (version_code in self.data and
-                            book in self.data[version_code] and
-                            chapter in self.data[version_code][book] and
-                                verse in self.data[version_code][book][chapter]):
-                            found = True
+                        if not (version_code in self.data and
+                                book in self.data[version_code] and
+                                str(chapter) in self.data[version_code][book] and
+                                str(verse) in self.data[version_code][book][str(chapter)] and
+                                self.data[version_code][book][str(chapter)][str(verse)]):
+                            is_missing_from_any = True
                             break
-                    if not found:
+                    if is_missing_from_any:
                         missing.append((book, chapter, verse))
         return missing
 
@@ -513,8 +505,26 @@ class BibleGatewayScraper:
     async def scrape_all(self):
         verses_to_scrape = self._get_verses_to_scrape()
         remaining = len(verses_to_scrape)
-        already_done = TOTAL_VERSES - remaining
-        total = TOTAL_VERSES
+        
+        # Calculate total work units: verses × translations
+        total_work_units = TOTAL_VERSES * len(self.versions)
+        
+        # Calculate already completed work units
+        already_done_count = 0
+        for book, chapters in BIBLE_STRUCTURE.items():
+            for chapter, vcount in chapters:
+                for verse in range(1, vcount + 1):
+                    # Count how many translations have this verse
+                    for version_code in self.versions:
+                        if (version_code in self.data and
+                            book in self.data[version_code] and
+                            str(chapter) in self.data[version_code][book] and
+                            str(verse) in self.data[version_code][book][str(chapter)]):
+                            already_done_count += 1
+        
+        remaining_work_units = total_work_units - already_done_count
+        total = total_work_units
+        already_done = already_done_count
 
         if remaining == 0:
             logger.info("No verses to scrape (all done).")
@@ -525,11 +535,11 @@ class BibleGatewayScraper:
 
         if already_done > 0:
             logger.info(
-                f"Resuming: {already_done}/{total} verses already completed "
+                f"Resuming: {already_done:,}/{total:,} verse-translations already completed "
                 f"({already_done/total*100:.1f}%)"
             )
         logger.info(
-            f"Scraping {remaining} verse(s) across {len(self.versions)} translations "
+            f"Scraping {remaining:,} verse(s) across {len(self.versions)} translation(s) "
             f"with {self.max_concurrent} concurrent requests..."
         )
 
@@ -538,11 +548,12 @@ class BibleGatewayScraper:
         async with aiohttp.ClientSession(connector=connector) as session:
             start_time = time.time()
             processed = 0
+            verses_processed = 0  # Track number of verses (not verse-translations)
 
             pbar = async_tqdm(
                 total=total,
                 initial=already_done,
-                unit="verse",
+                unit="v-t",  # verse-translations
                 desc="Scraping",
                 dynamic_ncols=True,
                 bar_format="{desc}: {percentage:3.2f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
@@ -567,32 +578,35 @@ class BibleGatewayScraper:
                         self._log_failed(book, ch, v, f"Batch error: {result}")
                         continue
 
+                    verse_update_count = 0
                     for version_code, text in result.items():
                         if text:
                             self.data.setdefault(version_code, {})
                             self.data[version_code].setdefault(book, {})
-                            self.data[version_code][book].setdefault(ch, {})
-                            self.data[version_code][book][ch][v] = text
+                            self.data[version_code][book].setdefault(str(ch), {})
+                            self.data[version_code][book][str(ch)][str(v)] = text
+                            verse_update_count += 1
 
                     self._mark_verse_done(book, ch, v)
-                    processed += 1
+                    processed += verse_update_count  # Count each translation as a work unit
+                    verses_processed += 1
 
                     elapsed = time.time() - start_time
-                    rate = processed / elapsed if elapsed > 0 else 0
-                    remaining_verses = remaining - processed
+                    rate = verses_processed / elapsed if elapsed > 0 else 0
+                    remaining_verses = remaining - verses_processed
                     eta = remaining_verses / rate if rate > 0 else 0
                     pbar.set_postfix({
                         "Ref": f"{book} {ch}:{v}",
                         "Rate": f"{rate:.1f} v/s",
                         "ETA": f"{eta/60:.1f}m" if eta < 3600 else f"{eta/3600:.1f}h"
                     })
-                    pbar.update(1)
+                    pbar.update(verse_update_count)  # Update by the number of translations fetched
 
                 self._save_state()
 
             pbar.close()
 
-        logger.info(f"Scraping complete! Processed {processed} verses.")
+        logger.info(f"Scraping complete! Processed {verses_processed:,} verses ({processed:,} verse-translations).")
         if self.failed:
             logger.warning(
                 f"⚠️ {len(self.failed)} verses failed. Run `--retry-missing` to re‑scrape them.")
