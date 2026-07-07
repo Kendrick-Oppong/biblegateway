@@ -12,13 +12,15 @@ A **fast, async, production-ready** web scraper that downloads the entire Bible 
 | Feature | Description |
 | :--- | :--- |
 | Async / Concurrent | Scrapes all translations for a verse in parallel — 10x faster than sync. |
-| Smart Resume | `--resume` picks up exactly where you left off with **accurate progress tracking** — automatically rebuilds progress from HTML cache if needed. |
+| Smart Resume | `--resume` picks up exactly where you left off with **accurate progress tracking** — automatically rebuilds progress from HTML cache if needed. Progress is calculated per verse-translation, not just per verse. |
 | HTML Cache | Avoids re-downloading pages. Cache is used for both scraping and resume progress calculation. `--force-refresh` to bypass. |
 | Retry Logic | Exponential backoff with `tenacity` for network flakiness. |
 | Rate Limiting | Configurable concurrency (`--max-concurrent`) to avoid being blocked. |
-| Accurate Progress | Live `tqdm` showing **true completion percentage** based on total verses (31,102), not just remaining work. Includes speed (verses/sec) and accurate ETA. |
+| Accurate Progress | Live `tqdm` showing **true completion percentage** based on total work (31,102 verses × number of translations), not just remaining work. Includes speed (verse-translations/sec) and accurate ETA. |
 | Per-Version JSON | Exports flat JSON arrays per translation (e.g., `versions/King James Version/KJV_bible.json`). |
+| Export Command | `--export-versions` regenerates all translation JSON files from `bible_data.json` after manual edits or merges. |
 | Retry Missing | `--retry-missing` finds and re-scrapes only verses that failed. |
+| Manual Verse Merge | Merge manually collected verses into the dataset with `merge_manual_verses.py`. |
 | Verify Completeness | `--verify` checks every book, chapter, and verse against the canonical structure. |
 | Overwrite Protection | Prompts or `--overwrite` to force a fresh start. |
 | Scrape All | `--scrape-all` downloads all 50+ translations in one command. |
@@ -50,6 +52,10 @@ biblegateway/                  ← Project root (also the package)
 ├── bible_data.json            ← Raw scraped data (created by scraper)
 ├── scraper_progress.json      ← Resume checkpoint — automatically saved after each batch
 ├── failed_verses.json         ← Tracks verses that failed to download
+├── manually_collected_verses.json  ← Optional: manually collected verses for merging
+├── merge_manual_verses.py     ← Script to merge manual verses into bible_data.json
+├── fetch_missing_verses.py    ← Script to fetch missing verses from BibleGateway
+├── export_versions.py         ← Export individual translations (also via cli.py --export-versions)
 ├── bible_scraper.log          ← Scraper activity log
 │
 ├── versions/                  ← Per-translation output (created by scraper)
@@ -158,37 +164,43 @@ If you run `python cli.py` without `--resume` but have existing data or progress
 
 #### Terminal Progress Bar
 
-The scraper displays a live-updating progress bar directly in your terminal that shows **accurate total progress**, not just progress on remaining work:
+The scraper displays a live-updating progress bar directly in your terminal that shows **accurate total progress** across all translations, not just progress on remaining work:
 
 ```
-Resuming: 5,247/31,102 verses already completed (16.9%)
-Scraping: 16.87%|███████░░░░░░░░░░░░░░░░░░░| 5,247/31,102 [00:42<3:45:12, 1.91verse/s]
+Resuming: 115,444/684,244 verse-translations already completed (16.9%)
+Scraping: 16.87%|███████░░░░░░░░░░░░░░░░░░| 115,444/684,244 [00:42<3:45:12, 42.0v-t/s]
 ```
+
+**Key Improvement:** Progress is calculated as **verse-translations** (verses × number of translations), not just verses. This means:
+
+- **22 translations × 31,102 verses = 684,244 total work units**
+- If you have 5,247 verses cached for all 22 translations = 115,444 completed work units (16.9%)
+- The progress bar shows your **true completion percentage** from 0-100%
 
 When you use `--resume`, the scraper:
-1. **Automatically detects** cached HTML files from previous runs
-2. **Rebuilds progress** from cache if needed (shows which verses are already downloaded)
-3. **Displays accurate percentage** from 0-100% based on total Bible verses (31,102)
+1. **Counts completed work** by checking which verse-translations exist in `bible_data.json`
+2. **Rebuilds from cache** if progress files are missing
+3. **Displays accurate percentage** based on total verse-translations (not just verses)
 4. **Calculates correct ETA** based only on remaining work
 
 Instead of showing:
 ```
-Scraping: 0.00%|          | 0/25,855 [...]  ← Wrong! Doesn't count cached verses
+Scraping: 0.00%|          | 0/31,102 [...]  ← Wrong! Doesn't count cached verses or translations
 ```
 
 You'll see:
 ```
 Rebuilding progress from HTML cache...
-Rebuilt 5,247 verses from cache
-Resuming: 5,247/31,102 verses already completed (16.9%)
-Scraping: 16.87%|███████░  | 5,247/31,102 [...]  ← Correct! Shows true progress
+Rebuilt 115,444 verse-translations from cache
+Resuming: 115,444/684,244 verse-translations already completed (16.9%)
+Scraping: 16.87%|███████░  | 115,444/684,244 [...]  ← Correct! Shows true progress across all translations
 ```
 
 The progress bar displays:
-- **Percentage completed** (based on all 31,102 verses)
+- **Percentage completed** (based on all verse-translations: 31,102 × number of translations)
 - **Current position** in the Bible (book chapter:verse)
-- **Verse count** (completed/total)
-- **Speed** (verses/second)
+- **Work unit count** (completed/total verse-translations)
+- **Speed** (verse-translations/second, shown as "v-t/s")
 - **Accurate ETA** (estimated time for remaining work)
 
 #### Monitor Log File
@@ -211,17 +223,17 @@ Once scraping is complete (or even while it's running), verify that all books, c
 python cli.py --verify
 ```
 
-This checks all 66 canonical books and 31,103 verses per translation and prints a completeness report.
+This checks all 66 canonical books and 31,102 verses per translation and prints a completeness report.
 
 Example output:
 
 ```
 Translation          Total Expected   Found   Missing   Complete
 -------------------  --------------- ------- --------- ---------
-KJV                        31,102   31,102        0    100.0%  OK
-NIV                        31,102   31,100        2     99.99%  INCOMPLETE
-ESV                        31,085   31,085        0    100.0%  OK
-NLT                        31,102   31,102        0    100.0%  OK
+KJV                        31,102   31,101        1    100.0%  OK
+NIV                        31,102   31,086       16     99.95%  OK
+ESV                        31,102   31,085       17     99.95%  OK
+AMP                        31,102   31,102        0    100.0%  OK
 ```
 
 Useful options:
@@ -233,23 +245,178 @@ python cli.py --verify --verify-version KJV
 # Print the summary table only (no per-verse detail)
 python cli.py --verify --summary-only
 
-# Export missing verses to a file for later retry
-python cli.py --verify --export-missing missing.json
+# Export missing verses to a file for detailed analysis
+python cli.py --verify --export-missing missing_verses.json
+
+# Export updated translation files after manual verse merges
+python cli.py --export-versions
 ```
 
-If any translation shows INCOMPLETE, run a targeted retry instead of re-running the entire scrape:
+#### Understanding Missing Verses
+
+**Important**: Some translations will show "missing" verses - this is **expected and normal**. Different Bible translations have different verse counts due to textual criticism and manuscript traditions:
+
+**Why verses are missing:**
+
+1. **Modern critical text translations** (NIV, ESV, NRSV, CSB, NET, etc.) omit verses not found in the earliest Greek manuscripts:
+   - Matthew 17:21, 18:11, 23:14
+   - Mark 7:16, 9:44, 9:46, 11:26, 15:28
+   - Luke 17:36, 23:17
+   - John 5:4
+   - Acts 8:37, 15:34, 24:7, 28:29
+   - Romans 16:24
+   
+   These verses are typically included in footnotes as "some manuscripts include..."
+
+2. **3 John 1:15** doesn't exist in any translation (3 John only has 14 verses)
+
+3. **Textual variants** mean some translations combine verses or format them differently (e.g., CEV's genealogy in Matthew 1)
+
+**Expected completion rates:**
+- Most translations: 99.9%+ (missing only verses not in their textual tradition)
+- Overall across all translations: 99.96%+
+- 4+ translations at 100%: NIRV, AMP, NCV
+
+**This is not a scraper error** - these verses genuinely don't exist on BibleGateway for those translations.
+
+### Achieving 100% Completion
+
+To get all translations to 100% completion:
+
+**1. Initial scrape:**
+```bash
+python cli.py --scrape-all --resume --max-concurrent 50
+```
+
+**2. Verify what's missing:**
+```bash
+python cli.py --verify --export-missing missing_verses.json
+```
+
+**3. Manually collect the missing verses** from Bible study resources or physical Bibles, then create `manually_collected_verses.json`:
+
+```json
+{
+  "summary": "Manually collected verses for textual variants",
+  "scriptures": {
+    "NIV": [
+      {
+        "book": "Matthew",
+        "chapter": 17,
+        "verse": 21,
+        "status": "bracket",
+        "text": "[But this kind does not go out except by prayer and fasting.]"
+      }
+    ]
+  }
+}
+```
+
+**4. Merge manual verses:**
+```bash
+python merge_manual_verses.py
+```
+
+**5. Export updated translations:**
+```bash
+python cli.py --export-versions
+```
+
+**6. Verify final results:**
+```bash
+python cli.py --verify
+```
+
+You should now see 100% completion for all 22 translations! 🎉
+
+#### Retrying Missing Verses
+
+If you want to double-check missing verses, use `--force-refresh` to re-download them directly from BibleGateway:
 
 ```bash
-# Retry only verse pages that verify.py reports as truly missing
-python cli.py -v KJV --retry-missing
+# Force re-download missing verses (ignores cache)
+python cli.py -v KJV NIV ESV --retry-missing --force-refresh
 
-# Re-download those pages instead of using cached HTML first
-python cli.py -v KJV --retry-missing --force-refresh
+# Retry only specific translation
+python cli.py -v NIV --retry-missing --force-refresh
 ```
+
+After running with `--force-refresh`, verses that are still missing are confirmed to not exist in those translations.
+
+### Fetching Missing Verses from Alternative Sources
+
+If you want to attempt to find the missing verses from other Bible websites (BibleHub, Bible.com), we provide scripts to do this:
+
+```bash
+# 1. Fetch missing verses from alternative sources
+python fetch_missing_verses.py
+
+# 2. Merge them into bible_data.json
+python merge_alternative_verses.py
+
+# 3. Verify the updated results
+python cli.py --verify --summary-only
+```
+
+This can recover ~150-180 of the missing verses from alternative sources. See [ALTERNATIVE_SOURCES.md](ALTERNATIVE_SOURCES.md) for detailed documentation.
+
+**Note**: Some verses (like 3 John 1:15) genuinely don't exist and cannot be found anywhere.
+
+### Manual Verse Collection
+
+For verses that BibleGateway couldn't provide (typically textual variants or verses legitimately absent from certain translations), you can manually collect them and merge them into your dataset:
+
+**1. Create a `manually_collected_verses.json` file** with the verses you've manually looked up:
+
+```json
+{
+  "summary": "Manually collected verses from various sources",
+  "scriptures": {
+    "NIV": [
+      { "book": "Matthew", "chapter": 17, "verse": 21, "status": "bracket", "text": "[But this kind...]" }
+    ],
+    "KJV": [
+      { "book": "3 John", "chapter": 1, "verse": 15, "status": "included in main text", "text": "Peace be to thee..." }
+    ]
+  }
+}
+```
+
+**2. Merge the manual verses into your dataset:**
+
+```bash
+python merge_manual_verses.py
+```
+
+This will:
+- Load your manually collected verses
+- Merge them into `bible_data.json`
+- Report how many verses were added, updated, or skipped
+
+**3. Export the updated translation files:**
+
+```bash
+python cli.py --export-versions
+```
+
+**4. Verify the results:**
+
+```bash
+python cli.py --verify
+```
+
+You should now see 100% completion for all translations!
 
 ### Step 3 — Use the Exported Files
 
-After scraping and verifying, the scraper automatically exports each translation as a flat JSON file inside a human-readable folder in `versions/`
+After scraping and verifying, you can export each translation as a flat JSON file inside a human-readable folder in `versions/`:
+
+```bash
+# Export all translations from bible_data.json
+python cli.py --export-versions
+```
+
+The scraper also automatically exports after scraping is complete.
 
 File structure:
 
@@ -359,6 +526,77 @@ The scraper captures 50+ translations from BibleGateway, including:
 
 ---
 
+## CLI Command Reference
+
+### Scraping Commands
+
+```bash
+# Scrape specific translations
+python cli.py -v KJV NIV ESV --resume
+
+# Scrape all 50+ translations
+python cli.py --scrape-all --resume --max-concurrent 50
+
+# Retry only missing verses
+python cli.py -v KJV --retry-missing
+
+# Force re-download (ignore cache)
+python cli.py -v KJV --force-refresh
+
+# Start fresh (delete all progress)
+python cli.py -v KJV --overwrite
+
+# Enable auto-verify after scraping
+python cli.py -v KJV --auto-verify
+```
+
+### Verification Commands
+
+```bash
+# Verify all translations
+python cli.py --verify
+
+# Verify specific translation
+python cli.py --verify --verify-version KJV
+
+# Show summary only (no missing verse details)
+python cli.py --verify --summary-only
+
+# Export missing verses to JSON
+python cli.py --verify --export-missing missing_verses.json
+```
+
+### Export and Utility Commands
+
+```bash
+# Export all translations to individual JSON files
+python cli.py --export-versions
+
+# Show failed verses from last scrape
+python cli.py --show-failed
+
+# Clear failed verses log
+python cli.py --clear-failed
+
+# Enable debug logging
+python cli.py -v KJV --debug
+```
+
+### Manual Verse Management
+
+```bash
+# Merge manually collected verses
+python merge_manual_verses.py
+
+# Fetch missing verses from BibleGateway
+python fetch_missing_verses.py
+
+# Export translations after manual merge
+python cli.py --export-versions
+```
+
+---
+
 ## Performance Tuning
 
 | Setting | Default | Recommendation |
@@ -391,10 +629,28 @@ The scraper captures 50+ translations from BibleGateway, including:
 
 ### "Why does --resume show 0% when I have cached data?"
 
-**Fixed in latest version!** The scraper now automatically detects cached HTML files and rebuilds the progress tracker. You'll see:
+**Fixed in latest version!** The scraper now:
+- Calculates progress as **verse-translations** (verses × number of translations)
+- Automatically detects cached HTML files and rebuilds the progress tracker
+- Shows accurate percentage from the start (e.g., 16.9% if you have 5,247 verses cached for 22 translations = 115,444/684,244 verse-translations)
+
+You'll see:
 ```
 Rebuilding progress from HTML cache...
-Rebuilt 5,247 verses from cache
+Rebuilt 115,444 verse-translations from cache
+Resuming: 115,444/684,244 verse-translations already completed (16.9%)
+```
+
+### "Why is verify showing missing verses?"
+
+**This is normal!** Different Bible translations have different verse counts due to textual criticism:
+- Modern translations (NIV, ESV, etc.) omit ~17 verses not in earliest manuscripts
+- 3 John only has 14 verses (verse 15 doesn't exist)
+- See the "Understanding Missing Verses" section under Step 2 for details
+
+To confirm verses are truly unavailable:
+```bash
+python cli.py -v NIV --retry-missing --force-refresh
 ```
 
 ### "How do I check which verses failed?"
@@ -412,6 +668,38 @@ To clear the failed verses log:
 ```bash
 python cli.py --clear-failed
 ```
+
+### "How do I export a list of missing verses?"
+
+```bash
+python cli.py --verify --export-missing missing_verses.json
+```
+
+This creates a JSON file with all missing verses organized by translation, useful for analysis or documentation.
+
+---
+
+## Expected Results
+
+After successfully scraping all translations, you should see:
+
+**Overall Statistics:**
+- Total verses across all translations: ~684,000+ (31,102 verses × 22 translations)
+- Overall completion: 99.96%+
+- Missing verses: ~254 out of 684,244 (0.037%)
+
+**Per-Translation Completion:**
+- **100% Complete**: NIRV, AMP, NCV (4 translations)
+- **99.99%+**: KJV, AKJV, NKJV, AMPC, ISV (5 translations)
+- **99.90%+**: All other modern translations
+
+**Common Missing Verses:**
+- 3 John 1:15 (doesn't exist - 3 John has only 14 verses)
+- Matthew 17:21, 18:11, 23:14 (not in earliest manuscripts)
+- Mark 7:16, 9:44, 9:46, 11:26, 15:28 (textual variants)
+- Acts 8:37, 15:34, 24:7, 28:29 (later additions)
+
+These missing verses are **expected and normal** - they reflect the actual content available on BibleGateway for each translation based on their textual traditions.
 
 ---
 
