@@ -494,20 +494,6 @@ python cli.py -v KJV --debug
 
 ## Troubleshooting
 
-### "Why does --resume show 0% when I have cached data?"
-
-**Fixed in latest version!** The scraper now:
-- Calculates progress as **verse-translations** (verses × number of translations)
-- Automatically detects cached HTML files and rebuilds the progress tracker
-- Shows accurate percentage from the start (e.g., 16.9% if you have 5,247 verses cached for 22 translations = 115,444/684,244 verse-translations)
-
-You'll see:
-```
-Rebuilding progress from HTML cache...
-Rebuilt 115,444 verse-translations from cache
-Resuming: 115,444/684,244 verse-translations already completed (16.9%)
-```
-
 ### "Why is verify showing missing verses?"
 
 **This is normal!** Different Bible translations have different verse counts due to textual criticism:
@@ -548,31 +534,32 @@ This creates a JSON file with all missing verses organized by translation, usefu
 
 ## Expected Results
 
-After successfully scraping all translations, you should see:
+After successfully scraping, you should see:
 
 **Overall Statistics:**
-- Total verses across all translations: ~684,000+ (31,102 verses × 22 translations)
-- Overall completion: 99.96%+
-- Missing verses: ~254 out of 684,244 (0.037%)
+- Total verses per translation: 31,102
+- Some translations may be missing verses due to textual variants
 
-**Per-Translation Completion:**
-- **100% Complete**: NIRV, AMP, NCV (4 translations)
-- **99.99%+**: KJV, AKJV, NKJV, AMPC, ISV (5 translations)
-- **99.90%+**: All other modern translations
+**What to expect:**
+- Most modern critical text translations (NIV, ESV, NLT, etc.) will be missing some verses
+- These verses are absent from the earliest Greek manuscripts and are therefore excluded
+- Some translations format verses differently (combining or splitting them)
 
-**Common Missing Verses:**
-- 3 John 1:15 (doesn't exist - 3 John has only 14 verses)
-- Matthew 17:21, 18:11, 23:14 (not in earliest manuscripts)
-- Mark 7:16, 9:44, 9:46, 11:26, 15:28 (textual variants)
-- Acts 8:37, 15:34, 24:7, 28:29 (later additions)
+**If you need missing verses:**
+- Export missing verses: `python cli.py --verify --export-missing missing_verses.json`
+- Manually collect them from physical Bibles or other sources
+- Edit `bible_data.json` directly to add them, or write a script to merge them
+- Re-export: `python cli.py --export-versions`
 
-These missing verses are **expected and normal** - they reflect the actual content available on BibleGateway for each translation based on their textual traditions.
+The scraper downloads what's available on BibleGateway - missing verses reflect the actual content of each translation.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License — see the LICENSE file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+**Important:** This license applies only to the scraper software itself. Bible translations have their own copyright terms and are not covered by this MIT License. See the LICENSE file for full details on Bible content usage.
 
 ## Acknowledgments
 
